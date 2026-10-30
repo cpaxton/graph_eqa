@@ -204,6 +204,7 @@ class VLMPlannerEQAGPT:
         last_step = f'''
             [Agent state(t={self.t}): {agent_state}, 
             Action(t={self.t}): {action}, 
+            Intended observed target position(t={self.t}): {list(target_pose)},
             Answer(t={self.t}): {answer.answer.name} {answer.answer.value}
             Confidence(t={self.t}):  Confident: {answer.is_confident}, Confidence level:{answer.confidence_level}  \n
         '''

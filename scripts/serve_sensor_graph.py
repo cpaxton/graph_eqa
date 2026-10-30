@@ -98,6 +98,7 @@ def scene_context(pipeline, output, frontiers, packet):
         f"\nLatest RGB-D camera-to-local-world pose at timestamp_ns={int(packet['timestamp_ns'])}: "
         + json.dumps(packet["camera_pose"].tolist())
         + ". The native agent node may precede this capture. Learned object labels are unverified predictions."
+        + " Frontier IDs refer to this capture's registry; their positions can change on subsequent captures."
     )
     return context
 
