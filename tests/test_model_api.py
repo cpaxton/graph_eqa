@@ -82,6 +82,24 @@ def test_modes_preserve_history_images_and_record_actual_request_response(tmp_pa
     assert "secret-test-key" not in trace_text
 
 
+def test_text_schema_retains_the_structured_contract_but_shows_root_before_definitions(tmp_path):
+    class Nested(BaseModel):
+        choice: Choice
+
+    schemas = {}
+    for mode in ("text", "json_schema"):
+        api, calls = provider(tmp_path / mode, mode=mode, content='{"choice":{"answer":"B"}}')
+        api.complete([{"role": "user", "content": "choose"}], Nested)
+        request = calls[0]
+        schemas[mode] = (
+            json.loads(request["messages"][0]["content"].split("\n", 1)[1])
+            if mode == "text"
+            else request["response_format"]["json_schema"]["schema"]
+        )
+    assert schemas["text"] == schemas["json_schema"]
+    assert list(schemas["text"])[0] == "type" and list(schemas["text"])[-1] == "$defs"
+
+
 @pytest.mark.parametrize(
     "content,finish,refusal",
     [

@@ -89,11 +89,24 @@ class StructuredModelAPI:
                 },
             }
         else:
+            # Put the root response shape before nested definitions. Otherwise
+            # text-only providers may emit an Answer definition as the entire
+            # response instead of the planner object containing it.
+            root_schema = {
+                key: schema[key] for key in ("type", "properties", "required", "additionalProperties") if key in schema
+            }
+            root_schema.update(
+                {key: value for key, value in schema.items() if key not in root_schema and key != "$defs"}
+            )
+            if "$defs" in schema:
+                root_schema["$defs"] = schema["$defs"]
             request["messages"].insert(
                 0,
                 {
                     "role": "system",
-                    "content": "Return only one JSON object matching this JSON Schema:\n" + json.dumps(schema),
+                    "content": "Return one complete JSON object matching the ROOT response schema below. "
+                    "Definitions in $defs describe nested values, not a separate response. "
+                    "Return only JSON, without surrounding prose.\n" + json.dumps(root_schema),
                 },
             )
             if self.mode == "json_object":
