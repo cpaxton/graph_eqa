@@ -55,6 +55,90 @@ def test_context_geometry_is_bound_to_observed_node_and_snapshot_is_immutable():
         FrozenSceneContext({**context(), "answer": "B"})
 
 
+def test_different_provided_models_use_their_own_endpoint_with_identical_evidence(tmp_path, monkeypatch):
+    Image.new("RGB", (8, 8), "blue").save(tmp_path / "image.png")
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "case",
+                    "question": "Color?",
+                    "choices": ["red", "blue"],
+                    "image": "image.png",
+                    "context": context(),
+                }
+            ]
+        )
+    )
+    profiles = []
+    for name in ("model-one", "model-two"):
+        profile = tmp_path / f"{name}.yaml"
+        profile.write_text(f"vlm:\n  name: {name}\n  base_url: http://{name}/v1\n  max_tokens: 128\n")
+        profiles.append(f"{name}={profile}")
+    calls = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        calls.append((request.url.host, body))
+        reply = (
+            {"answer": "B", "explanation": "blue", "confidence_level": 0.5, "is_confident": False}
+            if body["response_format"]["json_schema"]["name"] == "ImageOnlyAnswer"
+            else {
+                "steps": [],
+                "answer": {
+                    "answer": "blue",
+                    "explanation_ans": "blue",
+                    "explanation_conf": "uncertain",
+                    "confidence_level": 0.5,
+                    "is_confident": False,
+                },
+                "image_description": "cup",
+                "scene_graph_description": "cup",
+            }
+        )
+        return httpx.Response(
+            200,
+            json={
+                "id": "fixture",
+                "object": "chat.completion",
+                "created": 1,
+                "model": body["model"],
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": json.dumps(reply)},
+                    }
+                ],
+            },
+        )
+
+    def client(**kwargs):
+        return OpenAI(
+            base_url=kwargs["base_url"],
+            api_key="unused",
+            max_retries=0,
+            http_client=httpx.Client(transport=httpx.MockTransport(handle)),
+        )
+
+    monkeypatch.setattr("graph_eqa.utils.model_api.OpenAI", client)
+    monkeypatch.setattr(driver, "source_revision", lambda _: "fixture")
+    assert driver.run(SimpleNamespace(cases=cases, answers=None, model_config=profiles, output=tmp_path / "run")) == 0
+    assert [(host, request["model"]) for host, request in calls] == [
+        (name, name) for name in ("model-one", "model-two") for _ in range(2)
+    ]
+    images = [
+        block["image_url"]["url"]
+        for _, request in calls
+        for message in request["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] == "image_url"
+    ]
+    assert len(images) == 4 and len(set(images)) == 1
+
+
 @pytest.mark.parametrize("fail_first", [False, True])
 def test_pair_keeps_images_identical_and_gold_out_of_model_requests(tmp_path, monkeypatch, fail_first):
     image = tmp_path / "current.png"
