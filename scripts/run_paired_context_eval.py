@@ -4,12 +4,11 @@
 """Pair model-only and reference-graph requests on identical captured RGB evidence.
 
 This is frozen-context inference, not active navigation or episode success.
-Models run serially. Each case has one image file, which may itself be a saved
-reference image packet. Scoring labels are loaded only after all model calls.
+Models run serially. Cases accept one PNG or labeled independent PNG images.
+Scoring labels are loaded only after all model calls.
 """
 
 import argparse
-import base64
 import hashlib
 import json
 import subprocess
@@ -19,7 +18,7 @@ from pathlib import Path
 
 from graph_eqa.planners.vlm_planner_gpt import VLMPlannerEQAGPT
 from graph_eqa.utils.eval_context import FrozenSceneContext
-from graph_eqa.utils.model_api import StructuredModelAPI, with_model_config
+from graph_eqa.utils.model_api import StructuredModelAPI, image_evidence_content, with_model_config
 from omegaconf import OmegaConf
 from pydantic import create_model
 
@@ -43,8 +42,11 @@ def read_cases(path):
         raise ValueError("Cases must be a nonempty list")
     seen = set()
     for case in cases:
-        if set(case) != {"id", "question", "choices", "image", "context"}:
-            raise ValueError("Cases allow only id, question, choices, image and context; scoring labels are separate")
+        fields = {"id", "question", "choices", "context"}
+        if set(case) not in (fields | {"image"}, fields | {"images"}):
+            raise ValueError(
+                "Cases allow only id, question, choices, context and image or images; scoring labels are separate"
+            )
         if not isinstance(case["id"], str) or not case["id"].strip():
             raise ValueError("Case IDs must be nonempty strings")
         if case["id"] in seen:
@@ -59,10 +61,20 @@ def read_cases(path):
         ):
             raise ValueError("Missing question or invalid choice count")
         FrozenSceneContext(case["context"])
-        image = (path.parent / case["image"]).resolve()
-        if not image.is_file() or image.suffix.lower() != ".png":
-            raise ValueError("Each case needs one captured PNG image or reference image packet")
-        case["image"] = image
+        images = case.get("images", [{"path": case.get("image"), "label": "CURRENT captured view"}])
+        if not isinstance(images, list) or not 1 <= len(images) <= 16:
+            raise ValueError("Use 1 to 16 independently attached evidence images")
+        for item in images:
+            if not isinstance(item, dict) or set(item) != {"path", "label"}:
+                raise ValueError("Image records require only path and label")
+            if not isinstance(item["path"], str) or not isinstance(item["label"], str) or not item["label"].strip():
+                raise ValueError("Image paths and explicit evidence labels are required")
+            image = (path.parent / item["path"]).resolve()
+            if not image.is_file() or image.suffix.lower() != ".png":
+                raise ValueError("Each evidence image must be a captured PNG")
+            item["path"] = image
+        case["images"] = images
+        case["image"] = images[0]["path"]
     return cases
 
 
@@ -73,9 +85,14 @@ def question_text(case):
 def run_one(case, cfg, condition, output):
     letters = [chr(65 + i) for i in range(len(case["choices"]))]
     if condition == "reference_graph":
-        (output / "current_img_0.png").write_bytes(case["image"].read_bytes())
         planner = VLMPlannerEQAGPT(
-            cfg.vlm, FrozenSceneContext(case["context"]), question_text(case), letters, case["choices"], output
+            cfg.vlm,
+            FrozenSceneContext(case["context"]),
+            question_text(case),
+            letters,
+            case["choices"],
+            output,
+            image_evidence=case["images"],
         )
         position, target_id, confident, confidence, answer = planner.get_next_action()
         return {
@@ -93,7 +110,6 @@ def run_one(case, cfg, condition, output):
         is_confident=(bool, ...),
         confidence_level=(float, ...),
     )
-    data = base64.b64encode(case["image"].read_bytes()).decode("ascii")
     messages = [
         {
             "role": "system",
@@ -102,10 +118,7 @@ def run_one(case, cfg, condition, output):
         },
         {
             "role": "user",
-            "content": [
-                {"type": "text", "text": question_text(case)},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
-            ],
+            "content": [{"type": "text", "text": question_text(case)}] + image_evidence_content(case["images"]),
         },
     ]
     answer = StructuredModelAPI(cfg.vlm, output, purpose="model_only").complete(messages, response_type)
@@ -151,6 +164,7 @@ def run(args):
             for name, cfg, path in profiles
         ],
         "image_sha256": {case["id"]: sha256(case["image"]) for case in cases},
+        "images_sha256": {case["id"]: [sha256(image["path"]) for image in case["images"]] for case in cases},
         "scoring_complete": args.answers is None,
     }
     rows = []

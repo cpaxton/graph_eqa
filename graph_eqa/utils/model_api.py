@@ -6,6 +6,7 @@ The provider transport is independent of GraphEQA's graph, image selection and
 planning policy. Each response is validated before the controller can act.
 """
 
+import base64
 import copy
 import json
 import math
@@ -15,6 +16,26 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 from openai import OpenAI, pydantic_function_tool
+
+
+def image_evidence_content(images):
+    """Attach labeled images separately, preserving per-image preprocessing.
+
+    A contact sheet is useful for people, but a provider's per-image size cap
+    shrinks every tile together. Do not substitute one for multiple images.
+    """
+    content = []
+    for item in images:
+        path = Path(item["path"])
+        mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        content.extend(
+            [
+                {"type": "text", "text": item["label"]},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
+            ]
+        )
+    return content
 
 
 class ModelResponseError(RuntimeError):

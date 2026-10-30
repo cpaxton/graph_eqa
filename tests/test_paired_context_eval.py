@@ -140,7 +140,8 @@ def test_different_provided_models_use_their_own_endpoint_with_identical_evidenc
 
 
 @pytest.mark.parametrize("fail_first", [False, True])
-def test_pair_keeps_images_identical_and_gold_out_of_model_requests(tmp_path, monkeypatch, fail_first):
+@pytest.mark.parametrize("image_count", [1, 4])
+def test_pair_keeps_images_identical_and_gold_out_of_model_requests(tmp_path, monkeypatch, fail_first, image_count):
     image = tmp_path / "current.png"
     Image.new("RGB", (16, 16), "blue").save(image)
     cases = tmp_path / "cases.json"
@@ -151,6 +152,13 @@ def test_pair_keeps_images_identical_and_gold_out_of_model_requests(tmp_path, mo
         "image": "current.png",
         "context": context(),
     }
+    if image_count == 4:
+        item.pop("image")
+        item["images"] = [{"path": image.name, "label": "CURRENT frame 4"}]
+        for index in range(3):
+            path = tmp_path / f"history-{index}.png"
+            Image.new("RGB", (16, 16), (index * 70, 0, 0)).save(path)
+            item["images"].append({"path": path.name, "label": f"HISTORY frame {index}"})
     cases.write_text(json.dumps([item]))
     answers = tmp_path / "answers.json"
     answers.write_text('{"case":"B"}')
@@ -220,7 +228,8 @@ def test_pair_keeps_images_identical_and_gold_out_of_model_requests(tmp_path, mo
         ]
         for request in calls
     ]
-    assert images[0] == images[1] and len(images[0]) == 1
+    assert images[0] == images[1] and len(images[0]) == image_count
+    assert len(manifest["images_sha256"]["case"]) == image_count
     assert all(request["model"] == "fixture" and request["max_tokens"] == 128 for request in calls)
     scored = json.loads((output / "scored_results.json").read_text())
     assert scored[1]["answer"] == "B" and scored[1]["is_confident"] is False

@@ -64,9 +64,15 @@ per-profile generation budget. The graph condition also receives the observed
 graph, agent state and action registry. This compares complete input/controller
 conditions; it does not isolate a causal graph effect or execute navigation.
 
-Each case is a JSON object with **only** `id`, `question`, `choices`, `image`, and
-`context`. Store cases as a JSON list. `image` is relative to the cases file;
-use a captured current-view PNG or an already-declared reference image packet.
+Each case contains `id`, `question`, `choices`, `context` and exactly one of
+`image` or `images`. Store cases as a JSON list. `image` is a single PNG path
+relative to the cases file. `images` is a list of 1–16 records containing only
+`path` and `label`; put CURRENT first, then label earlier captures with their
+sequence and estimated pose. Each PNG is attached independently, with identical
+bytes/order/labels in both conditions. The manifest hashes every attachment.
+Use contact sheets for human inspection, not as a substitute for a multi-image
+budget: per-image resize caps shrink all tiles together. The emet Qwen server
+advertises its image size caps; the qualified default is 512 pixels per side.
 `context` is exactly `SceneGraphSim.planner_context()`, exported from the learned
 mapper. Its action registry is preserved explicitly; the adapter never guesses
 actions from node names or substitutes camera coordinates for object geometry.

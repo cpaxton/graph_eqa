@@ -1,15 +1,10 @@
 import json
 from enum import Enum
 from typing import List, Union
-import base64
 
 from graph_eqa.utils.data_utils import get_latest_image
-from graph_eqa.utils.model_api import StructuredModelAPI
+from graph_eqa.utils.model_api import StructuredModelAPI, image_evidence_content
 from pydantic import BaseModel
-
-def encode_image(image_path):
-  with open(image_path, "rb") as image_file:
-    return base64.b64encode(image_file.read()).decode('utf-8')
 
 def create_planner_response(frontier_node_list, room_node_list, region_node_list, object_node_list, Answer_options, use_image=True):
 
@@ -67,7 +62,7 @@ def create_planner_response(frontier_node_list, room_node_list, region_node_list
     
 
 class VLMPlannerEQAGPT:
-    def __init__(self, cfg, sg_sim, question, pred_candidates, choices, output_path):
+    def __init__(self, cfg, sg_sim, question, pred_candidates, choices, output_path, *, image_evidence=None):
         
         self._question, self.choices, self.vlm_pred_candidates = question, choices, pred_candidates
         self._output_path = output_path
@@ -83,6 +78,7 @@ class VLMPlannerEQAGPT:
 
         self._outputs_to_save = [f'Question: {self._question}. \n']
         self.sg_sim = sg_sim
+        self.image_evidence = image_evidence
 
     @property
     def t(self):
@@ -221,22 +217,13 @@ class VLMPlannerEQAGPT:
 
         if self._use_image:
 
-            image_path = get_latest_image(self._output_path)
-            base64_image = encode_image(image_path)
-            image_mime = 'image/png' if image_path.suffix.lower() == '.png' else 'image/jpeg'
+            images = self.image_evidence
+            if images is None:
+                images = [{"path": get_latest_image(self._output_path), "label": "CURRENT IMAGE: This image represents the current view of the agent. Use this as additional information to answer the question."}]
             messages.append(
                 { 
                     "role": "user",
-                    "content": [
-                        {
-                        "type": "text",
-                        "text": "CURRENT IMAGE: This image represents the current view of the agent. Use this as additional information to answer the question."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{image_mime};base64,{base64_image}"}
-                        }
-                    ]
+                    "content": image_evidence_content(images)
                 })
 
         frontier_node_list, room_node_list, region_node_list, object_node_list, Answer_options = self.get_actions()
