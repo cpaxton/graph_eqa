@@ -110,8 +110,49 @@ nonzero. A clean committed checkout is required, including untracked source.
 CPU contract checks (no API credentials, Hydra or GPU required):
 
 ```bash
-PYTHONPATH=. python -m pytest tests/test_model_api.py tests/test_paired_context_eval.py -q
+PYTHONPATH=. python -m pytest tests/test_model_api.py tests/test_paired_context_eval.py \
+  tests/test_active_eval.py tests/test_sensor_graph.py -q
 ```
 
 Active paired evaluation additionally requires observed-space execution and a
 matched, declared pose source. This frozen-context runner does not qualify them.
+
+## Active sensor connection
+
+`scripts/serve_sensor_graph.py` keeps native Hydra alive across learned RGB-D
+packets. Run it in the native dependency runtime with `--inputs`, `--output`
+and `--labels`. JSONL stdin accepts exactly `frame` (a local `.npz` basename)
+and `frontiers` (finite observed local XYZ coordinates). Packets contain only
+registered RGB, metric depth, intrinsics, estimated camera-to-local-world pose,
+monotonic timestamp and newly inferred label image. Extra fields, stale stamps
+and changing camera calibration fail. The caller is responsible for proving
+online mask provenance; an array schema cannot establish that by itself.
+
+Each atomic output JSON acknowledges its capture and graph-update receipt.
+The original reconstruction cadence remains five inputs per graph update;
+controller state needs the second update. Latest capture pose is distinguished
+from the older native agent node. Generic room labels and unverified learned
+object labels remain explicit. This qualified worker disables room inference
+and image ranking and is an adaptation, not the full upstream configuration.
+
+`graph_eqa.utils.active_eval.run_active_episode` connects this context to an
+external `observe` / `execute` boundary. Observation supplies exactly a fresh
+timestamp, PNG and learned context. Execution returns an explicit measured
+success/failure receipt. One reference controller persists across decisions;
+its native text history includes intended target geometry and motion feedback.
+That history is a summary, not emet's full dialogue or an archive of all prior
+images. Full requests/replies and capture contexts are retained for inspection.
+
+An uncertain empty plan is recorded as `no_action_not_confident`. A confident
+answer stops as `model_stopped`; exhausted decisions are recorded separately.
+None of these outcomes permits replacing the final answer. Infrastructure
+failures save their completed-decision count and propagate as failures.
+
+The host-side emet adapter supplies online YOLOE, local RGB-D odometry,
+observed-space grid search and the shared measured motion executor. Its
+[qualification report](https://github.com/cpaxton/home_robot_v3/blob/feat/harness-evidence-study/docs/experiments/grapheqa_active_qualification_20261030.md)
+records the serial short navigation gate, retained failures and current live
+checks. The first q2/q6/q12 diagnostic returned three wrong answers and executed
+no model-selected motion. API/native wiring therefore does **not** establish a
+working active baseline. Match pose, perception, acquisition and motion budgets
+before comparing against emet or reported upstream results.
