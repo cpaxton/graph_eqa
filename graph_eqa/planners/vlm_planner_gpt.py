@@ -87,6 +87,14 @@ class VLMPlannerEQAGPT:
     @property
     def t(self):
         return self._t
+
+    def record_motion_result(self, result):
+        """Keep actual execution feedback distinct from the proposed action.
+
+        The caller supplies the shared executor's receipt, not task answers or
+        oracle geometry. The model remains responsible for its next decision.
+        """
+        self._history += '\nMOTION RESULT: ' + json.dumps(result) + '\n'
     
     def get_actions(self): 
         # Enum values must be instance IDs. Repeated class/room names otherwise

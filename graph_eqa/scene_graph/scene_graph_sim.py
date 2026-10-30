@@ -253,7 +253,7 @@ class SceneGraphSim:
         
     def update_frontier_nodes(self, frontier_nodes):
         if len(frontier_nodes)>0:
-            self.filtered_obj_positions = np.array(self.filtered_obj_positions)
+            self.filtered_obj_positions = np.asarray(self.filtered_obj_positions).reshape(-1, 3)
             self.filtered_obj_ids = np.array(self.filtered_obj_ids)
             self._frontier_node_ids = []
             for i in range(frontier_nodes.shape[0]):
