@@ -1,4 +1,11 @@
 # GraphEQA
+
+This research fork adds configurable model APIs and controlled model comparisons.
+See [Model API and paired context evaluation](doc/model_api.md). It is based on
+upstream `d3fbbf14`; adaptations are listed explicitly. The original Habitat
+runners still have privileged simulation dependencies and are not sensor-only
+evaluation commands.
+
 This repo provides code for GraphEQA, a novel approach for utilizing 3D scene graphs for embodied question answering (EQA), introduced in the paper [GraphEQA: Using 3D Semantic Scene Graphs for Real-time Embodied Question Answering](https://www.arxiv.org/abs/2412.14480).
 
 <div align="center">
