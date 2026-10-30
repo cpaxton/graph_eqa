@@ -1,0 +1,11 @@
+# Merge with an existing experiment config using --model-config.
+# A server exposing /v1/chat/completions can provide any served model ID.
+vlm:
+  provider: openai_compatible
+  name: ${oc.env:GRAPH_EQA_MODEL,Qwen/Qwen3-VL-8B-Instruct}
+  base_url: ${oc.env:GRAPH_EQA_BASE_URL,http://127.0.0.1:8000/v1}
+  api_key_env: GRAPH_EQA_API_KEY
+  response_mode: text  # JSON instruction + local validation; no schema-support assumption
+  max_tokens: 2048
+  timeout_s: 120
+  max_retries: 0

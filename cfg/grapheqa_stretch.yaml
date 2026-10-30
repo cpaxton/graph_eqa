@@ -29,6 +29,7 @@ scene_graph_sim:
   img_subsample_freq: 1
   
 vlm:
+  room_model: gpt-4o-mini  # Explicit historical room-inference model; overlays default to their primary model
   name: "gpt-4o-2024-08-06" # 'gemini', 'gpt-4o-mini', 
   use_image: True
   use_done_action: False

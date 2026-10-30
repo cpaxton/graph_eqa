@@ -10,9 +10,7 @@ import rerun as rr
 
 from enum import Enum
 from pydantic import BaseModel
-from openai import OpenAI
-
-client = OpenAI()
+from graph_eqa.utils.model_api import StructuredModelAPI
 
 class Rooms(str, Enum):
     bedroom = "bedroom"
@@ -40,6 +38,8 @@ class SceneGraphSim:
         self.sg_cfg = cfg.scene_graph_sim
         self.device = device
         self.enrich_rooms = self.sg_cfg.enrich_rooms
+        self.room_model_api = (StructuredModelAPI(cfg.vlm, output_path, purpose="room",
+                               model=cfg.vlm.get("room_model")) if self.enrich_rooms else None)
         self.enrich_object_labels = enrich_object_labels
 
         self.save_image = self.sg_cfg.save_image
@@ -294,37 +294,35 @@ class SceneGraphSim:
                 object_names = np.unique([self.filtered_netx_graph.nodes[object_id]['name'] for object_id in object_ids])
                 
                 start = time.time()
-                completion = client.beta.chat.completions.parse(
-                    model="gpt-4o-mini",
-                    messages=[
+                response = self.room_model_api.complete(
+                    [
                         {"role": "user", "content": f"Given the list of objects: {object_names}. Which room are these objects most likely found in? Keep explanation very brief."}
                     ],
-                    response_format=Room_response,
+                    Room_response,
                 )
                 print(f" ======== time for room {room_id} enrichment: {time.time()-start}")
-                self.filtered_netx_graph.nodes[room_id]['name'] = completion.choices[0].message.parsed.room.value
-                self._room_names.append(completion.choices[0].message.parsed.room.value)
+                self.filtered_netx_graph.nodes[room_id]['name'] = response.room.value
+                self._room_names.append(response.room.value)
         else:
             # If no room nodes exist, add room_0 to graph and egdes to regions 
             self._room_ids = ['room_0']
             object_names = np.unique([self.filtered_netx_graph.nodes[object_id]['name'] for object_id in self._object_node_ids])
             start = time.time()
-            completion = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
-                messages=[
+            response = self.room_model_api.complete(
+                [
                     {"role": "user", "content": f"Given the list of objects: {object_names}. Which room are these objects most likely found in? Keep explanation very brief."}
                 ],
-                response_format=Room_response,
+                Room_response,
             )
             print(f" ======== time for room enrichment: {time.time()-start}")
 
             # Add node to graph
             attr={
-                'name': completion.choices[0].message.parsed.room.value,
+                'name': response.room.value,
                 'layer': 4
             }
             self.filtered_netx_graph.add_nodes_from([('room_0', attr)])
-            self._room_names.append(completion.choices[0].message.parsed.room.value)
+            self._room_names.append(response.room.value)
 
             # Add edges from room to region
             edge_type = 'room-to-region'
@@ -366,7 +364,7 @@ class SceneGraphSim:
         return nodeid, node_type, node_name
     
     def get_current_semantic_state_str(self):
-        agent_pos = self.filtered_netx_graph.nodes[self.curr_agent_id]['position']
+        agent_pos = np.asarray(self.filtered_netx_graph.nodes[self.curr_agent_id]['position'], dtype=float).tolist()
         agent_loc_str = f'The agent is currently at node {self.curr_agent_id} at position {agent_pos}'
         if self.include_regions:
             agent_place_ids = [place_id for place_id in self.filtered_netx_graph.predecessors(self.curr_agent_id)]
@@ -380,6 +378,24 @@ class SceneGraphSim:
             if (room_name != 'room'):
                 room_str = f' at room node: {room_id[0]} with name {room_name}'
         return f'{agent_loc_str} {room_str}'
+
+    def planner_context(self):
+        """Export exactly the graph and action registry used by the controller.
+
+        These positions and labels must come from the mapping frontend, never
+        from simulator annotations. This wire format also supports frozen-view
+        model comparisons without substituting a guessed action registry.
+        """
+        return {
+            "agent_state": self.get_current_semantic_state_str(),
+            "scene_graph": json.loads(self.scene_graph_str),
+            "actions": {
+                "objects": [{"id": i, "name": n} for i, n in zip(self.object_node_ids, self.object_node_names)],
+                "rooms": [{"id": i, "name": n} for i, n in zip(self.room_node_ids, self.room_node_names)],
+                "frontiers": list(self.frontier_node_ids),
+                "regions": list(self.region_node_ids),
+            },
+        }
     
     def update(self, imgs_rgb=[], imgs_depth=None, intrinsics=None, extrinsics=None, frontier_nodes=[]):
 
@@ -391,6 +407,8 @@ class SceneGraphSim:
 
         if self.enrich_rooms and not self.no_scene_graph:
             self.add_room_labels_to_sg()
+        elif not self.no_scene_graph:
+            self._room_names = [self.filtered_netx_graph.nodes[i]['name'] for i in self.room_node_ids]
 
         if not self.include_regions:
             self.remove_region_nodes()
