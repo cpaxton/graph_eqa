@@ -202,6 +202,8 @@ def test_planner_strict_schema_closes_all_objects_and_keeps_empty_plans_legal(us
         use_image=use_image,
     )
     schema = pydantic_function_tool(response)["function"]["parameters"]
+    assert list(schema["properties"])[:2] == ["answer", "steps"]
+    assert schema["required"][:2] == ["answer", "steps"]
 
     def check(node):
         if isinstance(node, dict):
