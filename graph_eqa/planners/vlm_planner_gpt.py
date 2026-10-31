@@ -28,25 +28,25 @@ def create_planner_response(frontier_node_list, room_node_list, region_node_list
         is_confident: bool
 
     class PlannerResponse(BaseModel):
-        answer: Answer
         steps: List[Union[Goto_object_node_step, Goto_frontier_node_step]]
+        answer: Answer
         image_description: str
         scene_graph_description: str
     
     class PlannerResponseNoFrontiers(BaseModel):
-        answer: Answer
         steps: List[Goto_object_node_step]
+        answer: Answer
         image_description: str
         scene_graph_description: str
     
     class PlannerResponseNoImage(BaseModel):
-        answer: Answer
         steps: List[Union[Goto_object_node_step, Goto_frontier_node_step]]
+        answer: Answer
         scene_graph_description: str
     
     class PlannerResponseNoFrontiersNoImage(BaseModel):
-        answer: Answer
         steps: List[Goto_object_node_step]
+        answer: Answer
         scene_graph_description: str
     
     if use_image:
