@@ -43,15 +43,17 @@ class ModelResponseError(RuntimeError):
 
 
 def with_model_config(cfg, path):
-    """Overlay only model settings; a provider profile cannot replace the dataset."""
+    """Overlay model settings without mutating the base or loaded profile.
+
+    An omitted or null ``room_model`` means use the profile's primary ``name``;
+    it deliberately clears any historical room-model override in the base.
+    """
     profile = OmegaConf.load(path)
     if set(profile) != {"vlm"} or not OmegaConf.is_dict(profile.vlm):
         raise ValueError("Model profiles must contain only a vlm mapping")
     # A provider profile owns all model roles unless it explicitly declares a
     # separate room model; do not inherit a historical GPT room-call dependency.
-    if "room_model" not in profile.vlm:
-        profile.vlm.room_model = None
-    return OmegaConf.merge(cfg, profile)
+    return OmegaConf.merge(cfg, {"vlm": {"room_model": None}}, profile)
 
 
 class StructuredModelAPI:

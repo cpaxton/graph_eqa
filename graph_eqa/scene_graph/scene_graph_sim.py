@@ -1,4 +1,5 @@
 import json, time, os
+from collections.abc import Mapping
 import numpy as np
 import networkx as nx
 from networkx.readwrite import json_graph
@@ -38,8 +39,11 @@ class SceneGraphSim:
         self.sg_cfg = cfg.scene_graph_sim
         self.device = device
         self.enrich_rooms = self.sg_cfg.enrich_rooms
-        self.room_model_api = (StructuredModelAPI(cfg.vlm, output_path, purpose="room",
-                               model=cfg.vlm.get("room_model")) if self.enrich_rooms else None)
+        self.room_model_api = None
+        self._room_model_cfg = cfg.get("vlm")
+        if self.enrich_rooms and (not isinstance(self._room_model_cfg, Mapping) or not self._room_model_cfg.get("name")):
+            raise ValueError("Room enrichment requires cfg.vlm.name and provider settings; "
+                             "set scene_graph_sim.enrich_rooms=false for mapping without model inference")
         self.enrich_object_labels = enrich_object_labels
 
         self.save_image = self.sg_cfg.save_image
@@ -285,7 +289,18 @@ class SceneGraphSim:
                         if self.rr_logger is not None:
                             self.rr_logger.log_hydra_graph(is_node=False, edge_type=edge_type, edgeid=edgeid, node_pos_source=frontier_nodes[i], node_pos_target=obj_pos)
 
+    def _get_room_model_api(self):
+        """Defer provider credentials/client setup until room inference is used."""
+        if not self.enrich_rooms:
+            raise ValueError("Room enrichment is disabled")
+        if self.room_model_api is None:
+            self.room_model_api = StructuredModelAPI(
+                self._room_model_cfg, self.output_path, purpose="room",
+                model=self._room_model_cfg.get("room_model"))
+        return self.room_model_api
+
     def add_room_labels_to_sg(self):
+        room_model_api = self._get_room_model_api()
         self._room_names = []
         if len(self._room_ids)>0:
             for room_id in self._room_ids:
@@ -294,7 +309,7 @@ class SceneGraphSim:
                 object_names = np.unique([self.filtered_netx_graph.nodes[object_id]['name'] for object_id in object_ids])
                 
                 start = time.time()
-                response = self.room_model_api.complete(
+                response = room_model_api.complete(
                     [
                         {"role": "user", "content": f"Given the list of objects: {object_names}. Which room are these objects most likely found in? Keep explanation very brief."}
                     ],
@@ -308,7 +323,7 @@ class SceneGraphSim:
             self._room_ids = ['room_0']
             object_names = np.unique([self.filtered_netx_graph.nodes[object_id]['name'] for object_id in self._object_node_ids])
             start = time.time()
-            response = self.room_model_api.complete(
+            response = room_model_api.complete(
                 [
                     {"role": "user", "content": f"Given the list of objects: {object_names}. Which room are these objects most likely found in? Keep explanation very brief."}
                 ],
