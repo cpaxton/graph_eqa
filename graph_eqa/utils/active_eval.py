@@ -27,8 +27,11 @@ def run_active_episode(cfg, question, choices, observe, execute, output, *, max_
     try:
         for index in range(max_decisions):
             capture = observe()
-            if set(capture) != {"timestamp_ns", "image", "context"}:
-                raise ValueError("Observe must provide only timestamp_ns, captured image and learned context")
+            if set(capture) not in (
+                {"timestamp_ns", "image", "context"},
+                {"timestamp_ns", "image", "context", "images"},
+            ):
+                raise ValueError("Observe requires timestamp_ns, image, context and optional labeled images")
             stamp = capture["timestamp_ns"]
             if not isinstance(stamp, int) or stamp <= previous_stamp:
                 raise ValueError("Assessment requires a fresh capture timestamp")
@@ -38,11 +41,39 @@ def run_active_episode(cfg, question, choices, observe, execute, output, *, max_
             if image.suffix.lower() != ".png" or not image.is_file():
                 raise ValueError("Assessment requires a captured PNG")
             (output / f"current_img_{index}.png").write_bytes(image.read_bytes())
+            evidence = None
+            if "images" in capture:
+                evidence = capture["images"]
+                if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
+                    raise ValueError("Use one to sixteen captured evidence images, current first")
+                saved = []
+                for image_index, item in enumerate(evidence):
+                    if (
+                        set(item) != {"path", "label"}
+                        or not isinstance(item["label"], str)
+                        or not item["label"].strip()
+                    ):
+                        raise ValueError("Evidence requires only a captured PNG path and nonempty label")
+                    source = Path(item["path"])
+                    if source.suffix.lower() != ".png" or not source.is_file():
+                        raise ValueError("Evidence requires a captured PNG")
+                    data = source.read_bytes()
+                    if image_index == 0 and data != image.read_bytes():
+                        raise ValueError("The first evidence image must match the current capture")
+                    destination = output / f"evidence-{index:03d}-{image_index:02d}.png"
+                    destination.write_bytes(data)
+                    saved.append({"path": str(destination), "label": item["label"]})
+                evidence = saved
+                (output / f"evidence-{index:03d}.json").write_text(json.dumps(evidence, indent=2) + "\n")
             (output / f"context-{index:03d}.json").write_text(json.dumps(capture["context"], indent=2) + "\n")
             if planner is None:
                 planner = VLMPlannerEQAGPT(cfg, scene, prompt, letters, choices, output)
             else:
                 planner.sg_sim = scene
+            # Replace the packet on every fresh assessment, retaining the same
+            # planner and its measured action history. None preserves legacy
+            # current-image behavior rather than reusing an earlier packet.
+            planner.image_evidence = evidence
             position, target, confident, confidence, answer = planner.get_next_action()
             row = {
                 "decision": index,

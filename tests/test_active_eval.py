@@ -1,11 +1,14 @@
 # Copyright (c) Chris Paxton 2026
 # Licensed under the Apache License, Version 2.0.
 
+import base64
 import json
+from types import SimpleNamespace
 
 import pytest
 from graph_eqa.utils.active_eval import run_active_episode
 from PIL import Image
+from test_model_api import provider
 from test_paired_context_eval import context
 
 
@@ -69,3 +72,90 @@ def test_stale_capture_stops_before_second_model_call_and_retains_failure(tmp_pa
     assert len(calls) == 1
     result = json.loads((tmp_path / "run/result.json").read_text())
     assert result["status"] == "infrastructure_or_contract_failure" and result["completed_decisions"] == 1
+
+
+def test_native_planner_refreshes_independent_images_and_retains_motion_history(tmp_path, monkeypatch):
+    images = [tmp_path / f"capture-{index}.png" for index in range(3)]
+    for path, color in zip(images, ("red", "blue", "green"), strict=True):
+        Image.new("RGB", (4, 4), color).save(path)
+    reply = {
+        "answer": {
+            "answer": "red",
+            "explanation_ans": "Need another view",
+            "explanation_conf": "Incomplete",
+            "confidence_level": 0.2,
+            "is_confident": False,
+        },
+        "steps": [
+            {
+                "object_id": "object_0",
+                "room_id": "room_0",
+                "explanation_room": "Same room",
+                "explanation_obj": "Inspect cup",
+            }
+        ],
+        "image_description": "Captured views",
+        "scene_graph_description": "Learned cup",
+    }
+    api, calls = provider(tmp_path / "traces", mode="text", content=json.dumps(reply))
+    monkeypatch.setattr("graph_eqa.planners.vlm_planner_gpt.StructuredModelAPI", lambda *args: api)
+    observations = iter((1, 2))
+
+    def observe():
+        stamp = next(observations)
+        return {
+            "timestamp_ns": stamp,
+            "image": images[stamp],
+            "context": context(),
+            "images": [
+                {"path": images[stamp], "label": f"CURRENT sequence={stamp}"},
+                {"path": images[0], "label": "HISTORY sequence=0"},
+            ],
+        }
+
+    receipt = {"success": True, "measured_pose": [0.2, 0, 0]}
+    result = run_active_episode(
+        SimpleNamespace(name="qwen", use_image=True, add_history=True),
+        "Color?",
+        ["red", "blue"],
+        observe,
+        lambda *args: receipt,
+        tmp_path / "run",
+        max_decisions=2,
+    )
+    assert result["status"] == "decision_budget_exhausted" and len(calls) == 2
+    for index, call in enumerate(calls, 1):
+        content = call["messages"][-1]["content"]
+        assert [part["text"] for part in content if part["type"] == "text"] == [
+            f"CURRENT sequence={index}",
+            "HISTORY sequence=0",
+        ]
+        data = [
+            base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
+            for part in content
+            if part["type"] == "image_url"
+        ]
+        assert data == [images[index].read_bytes(), images[0].read_bytes()]
+    assert "MOTION RESULT" not in str(calls[0]["messages"])
+    assert json.dumps(receipt) in str(calls[1]["messages"])
+    assert (tmp_path / "run/evidence-001.json").is_file()
+
+
+def test_history_packet_cannot_replace_current_capture(tmp_path):
+    current, stale = tmp_path / "current.png", tmp_path / "stale.png"
+    Image.new("RGB", (4, 4), "red").save(current)
+    Image.new("RGB", (4, 4), "blue").save(stale)
+    with pytest.raises(ValueError, match="match the current"):
+        run_active_episode(
+            {},
+            "Color?",
+            ["red", "blue"],
+            lambda: {
+                "timestamp_ns": 1,
+                "image": current,
+                "context": context(),
+                "images": [{"path": stale, "label": "CURRENT"}],
+            },
+            lambda *args: {"success": True},
+            tmp_path / "run",
+        )

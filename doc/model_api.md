@@ -120,6 +120,13 @@ nonzero. A clean committed checkout is required, including untracked source.
 Standard Vim dot-file swaps (`.*.swp`, `.*.swo`) are ignored by `.gitignore`.
 Untracked Python or other executable source still blocks the freeze gate.
 
+The separate active adapter accepts the same optional labeled image records in
+`observe()["images"]` (1–16 PNGs, current first). The first PNG must exactly match
+`observe()["image"]`. It snapshots the packet per assessment and refreshes the
+same planner's evidence while retaining measured action history. Omitting this
+field preserves the single-current-image behavior. Capture selection is the
+caller's task-independent policy; this does not authorize oracle image selection.
+
 ## Adaptations from upstream
 
 - Provider profiles route planner and room calls through configured model APIs;
