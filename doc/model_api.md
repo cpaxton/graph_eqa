@@ -127,6 +127,12 @@ same planner's evidence while retaining measured action history. Omitting this
 field preserves the single-current-image behavior. Capture selection is the
 caller's task-independent policy; this does not authorize oracle image selection.
 
+The current fork retains upstream response-field ordering and stopping behavior.
+An answer-first field-order experiment elicited actions in two frozen Qwen
+requests but did not transfer to fresh single/four-view interaction checks, so
+that default change was reverted. Neither a proposed step in a confident stop
+nor a successful API response establishes executed navigation or task success.
+
 ## Adaptations from upstream
 
 - Provider profiles route planner and room calls through configured model APIs;
