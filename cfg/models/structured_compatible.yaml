@@ -1,4 +1,6 @@
-# Use only with a provider/model supporting Chat Completions JSON Schema.
+# Requires provider/model support for strict:true Chat Completions JSON Schema,
+# including nested anyOf, required properties and additionalProperties:false.
+# OpenAI-compatible transport alone does not imply this support; no fallback.
 vlm:
   provider: openai_compatible
   name: ${oc.env:GRAPH_EQA_MODEL}

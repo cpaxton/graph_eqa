@@ -2,14 +2,15 @@
 # Licensed under the Apache License, Version 2.0.
 
 import json
+from enum import Enum
 from types import SimpleNamespace
 
 import httpx
 import pytest
-from graph_eqa.planners.vlm_planner_gpt import VLMPlannerEQAGPT
+from graph_eqa.planners.vlm_planner_gpt import VLMPlannerEQAGPT, create_planner_response
 from graph_eqa.utils.model_api import ModelResponseError, StructuredModelAPI, with_model_config
 from omegaconf import OmegaConf
-from openai import OpenAI
+from openai import OpenAI, pydantic_function_tool
 from pydantic import BaseModel, ValidationError
 
 
@@ -135,13 +136,18 @@ def test_model_profile_cannot_change_dataset_or_perception(tmp_path):
 
 
 @pytest.mark.parametrize("target_id", ["object_2", "object_99"])
-def test_native_planner_preserves_duplicate_object_identity_and_model_answer(tmp_path, target_id):
+@pytest.mark.parametrize("external_ids", [False, True])
+def test_native_planner_preserves_duplicate_object_identity_and_model_answer(tmp_path, target_id, external_ids):
+    object_ids = ["object-1", "2-object"] if external_ids else ["object_1", "object_2"]
+    room_ids = ["room-1", "2-room"] if external_ids else ["room_1", "room_2"]
+    valid = target_id == "object_2"
+    target_id = object_ids[1] if valid else "object_99"
     response = {
         "steps": [
             {
                 "explanation_room": "inspect",
                 "explanation_obj": "second cup",
-                "room_id": "room_2",
+                "room_id": room_ids[1],
                 "object_id": target_id,
             }
         ],
@@ -156,30 +162,70 @@ def test_native_planner_preserves_duplicate_object_identity_and_model_answer(tmp
     }
     api, calls = provider(tmp_path, content=json.dumps(response))
     scene = SimpleNamespace(
-        object_node_ids=["object_1", "object_2"],
+        object_node_ids=object_ids,
         object_node_names=["cup", "cup"],
-        room_node_ids=["room_1", "room_2"],
+        room_node_ids=room_ids,
         room_node_names=["room", "room"],
-        frontier_node_ids=[],
-        region_node_ids=[],
+        frontier_node_ids=["3-frontier"] if external_ids else [],
+        region_node_ids=["4-region"] if external_ids else [],
         scene_graph_str="two different cup instances",
         get_current_semantic_state_str=lambda: "estimated local pose",
-        get_position_from_id=lambda target: {"object_1": [1, 0, 0], "object_2": [2, 0, 0]}[target],
+        get_position_from_id=lambda target: {object_ids[0]: [1, 0, 0], object_ids[1]: [2, 0, 0]}[target],
     )
     cfg = OmegaConf.create({"name": "qwen", "base_url": "http://unused/v1", "use_image": False, "add_history": True})
     planner = VLMPlannerEQAGPT(cfg, scene, "Which color?", ["A", "B"], ["red", "blue"], tmp_path)
     planner.model_api = api
-    if target_id == "object_99":
+    if not valid:
         with pytest.raises(ValidationError):
             planner.get_next_action()
         assert planner.t == 0 and planner._history == ""
         return
     pose, target, confident, _, answer = planner.get_next_action()
-    assert pose == [2, 0, 0] and target == "object_2"
+    assert pose == [2, 0, 0] and target == object_ids[1]
     assert answer == "B" and confident is False
     assert "object name: cup" in planner._history
     assert planner.t == 1
-    assert calls[0]["response_format"]["json_schema"]["schema"]["$defs"]["object_node_list"]["enum"] == [
-        "object_1",
-        "object_2",
-    ]
+    assert calls[0]["response_format"]["json_schema"]["schema"]["$defs"]["object_node_list"]["enum"] == object_ids
+
+
+@pytest.mark.parametrize("use_image", [False, True])
+@pytest.mark.parametrize("has_frontiers", [False, True])
+def test_planner_strict_schema_closes_all_objects_and_keeps_empty_plans_legal(use_image, has_frontiers):
+    def enum(name, values):
+        return Enum(name, {value: value for value in values}, type=str)
+    response = create_planner_response(
+        enum("Frontiers", ["frontier_1"]) if has_frontiers else None,
+        enum("Rooms", ["room_1"]),
+        enum("Regions", ["region_1"]),
+        enum("Objects", ["object_1"]),
+        enum("Answers", ["red", "blue"]),
+        use_image=use_image,
+    )
+    schema = pydantic_function_tool(response)["function"]["parameters"]
+
+    def check(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node["additionalProperties"] is False
+                assert set(node["required"]) == set(node["properties"])
+            for value in node.values():
+                check(value)
+        elif isinstance(node, list):
+            for value in node:
+                check(value)
+
+    check(schema)
+    data = {
+        "steps": [],
+        "answer": {
+            "answer": "blue",
+            "explanation_ans": "unknown",
+            "explanation_conf": "uncertain",
+            "confidence_level": 0.0,
+            "is_confident": False,
+        },
+        "scene_graph_description": "observed objects",
+    }
+    if use_image:
+        data["image_description"] = "current view"
+    assert response.model_validate(data).steps == []

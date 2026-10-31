@@ -4,6 +4,7 @@
 import copy
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,25 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/run_paired_context_eval.
 spec = importlib.util.spec_from_file_location("paired_eval", SCRIPT)
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
+
+
+def test_source_freeze_ignores_editor_swaps_but_rejects_untracked_python(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    (tmp_path / ".gitignore").write_bytes((root / ".gitignore").read_bytes())
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("add", ".gitignore")
+    git("-c", "user.name=Contract Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture")
+    (tmp_path / ".README.md.swp").write_text("editor buffer")
+    assert driver.source_revision(tmp_path) == git("rev-parse", "HEAD")
+    (tmp_path / "untracked_source.py").write_text("print('executable source')\n")
+    with pytest.raises(RuntimeError, match="untracked source"):
+        driver.source_revision(tmp_path)
 
 
 def context():

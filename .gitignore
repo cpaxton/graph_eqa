@@ -47,3 +47,7 @@ ipython_config.py
 outputs
 media
 wandb
+
+# Non-executable editor swap files. Keep untracked source visible to eval gates.
+.*.swp
+.*.swo

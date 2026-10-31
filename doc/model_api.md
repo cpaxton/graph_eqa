@@ -35,9 +35,22 @@ the model name. Room inference uses the same model by default; an explicit
 profile files with explicit endpoints/model IDs for different model servers;
 reusing an environment-interpolated profile twice does not create two models.
 
+An omitted or null `room_model` deliberately inherits the profile's primary
+`vlm.name`, clearing any old room-model override from the base config. An
+explicit room-model name retains that override. Applying a profile mutates
+neither the base config nor the profile file.
+
+`SceneGraphSim` needs no `vlm` block when `enrich_rooms: false`. When room
+enrichment is enabled, configure `vlm.name` and its provider explicitly; missing
+settings raise a descriptive error before output construction. All shipped
+room-enrichment configs provide these settings. Provider credentials/client
+creation are deferred until the first actual room-inference call. Mapping-only
+callers migrating from the old global client should disable enrichment or add
+an explicit model profile; there is no implicit cloud-model fallback.
+
 Three response modes are explicit:
 
-- `json_schema`: provider-enforced strict JSON Schema, followed by local validation.
+- `json_schema`: provider-enforced `strict: true` JSON Schema, followed by local validation.
 - `json_object`: JSON-mode request plus an explicit schema instruction and local validation.
 - `text`: schema instruction and local validation, without claiming provider-side constraints.
 
@@ -48,12 +61,23 @@ automatic mode, endpoint or model fallback. `token_parameter` selects
 `max_tokens` (default) or `max_completion_tokens`. Optional `temperature`, `top_p`,
 `seed` and `extra_body` are sent only when configured and supported by the server.
 Timeout and bounded SDK retry settings are recorded in the experiment profile.
+Chat Completions compatibility alone does not establish strict-schema support.
+The planner uses nested `anyOf` alternatives; the SDK emits required properties
+and `additionalProperties: false` for every object. Empty action lists remain
+legal. Use `json_schema` only after qualifying that provider/model's strict
+subset; select `json_object` or `text` explicitly otherwise. This contract is
+not defined by a model-name allowlist, and incompatible providers may reject it.
 
 Each output directory contains `model_calls.jsonl`: purpose, endpoint, full model
 request (including image data), raw response, reported model/usage, validation
 status, errors and wall time. Missing provider token counts remain unknown;
 they must not be interpreted as zero-cost inference. Invalid/truncated/refused
 responses fail without applying a target or replacing the model's answer.
+Full-image traces deliberately cost storage: base64 adds roughly one third to
+the encoded PNG bytes, repeated for every call. Keep inputs/traces outside the
+source checkout and compress completed runs for retention. Removing image
+inputs or changing `extra_body` to save log space changes inference; it is not
+a trace-storage optimization.
 
 ## Paired comparisons on frozen visual evidence
 
@@ -93,6 +117,8 @@ active EQA success: a controller may correctly say it needs more observations.
 No target is executed, and `interaction_steps` is zero. Infrastructure failures
 remain in `results.jsonl` and the planned denominator; incomplete runs exit
 nonzero. A clean committed checkout is required, including untracked source.
+Standard Vim dot-file swaps (`.*.swp`, `.*.swo`) are ignored by `.gitignore`.
+Untracked Python or other executable source still blocks the freeze gate.
 
 ## Adaptations from upstream
 
@@ -107,6 +133,10 @@ nonzero. A clean committed checkout is required, including untracked source.
 - Object/room enums encode instance IDs. Upstream name-valued enums collapse
   repeated labels into aliases and cannot select the second identically named
   object. History still includes the object's human-readable label.
+  Native graph IDs use prefixes such as `object_3`/`frontier_2`; external
+  hyphenated and leading-digit IDs are also preserved by the functional Enum
+  API and covered through schema validation and target selection. IDs are not
+  renamed into Python identifiers; reserved Enum member names are unsupported.
 - PNG inputs have a matching data-URL MIME type. Leading schema/policy/question
   instructions are preserved; conversation history is not reset by the adapter.
 - Disabled room inference retains generic observed room labels in the registry;
@@ -119,6 +149,14 @@ CPU contract checks (no API credentials, Hydra or GPU required):
 PYTHONPATH=. python -m pytest tests/test_model_api.py tests/test_paired_context_eval.py \
   tests/test_active_eval.py tests/test_sensor_graph.py -q
 ```
+
+These tests need `openai>=1.88`, `pydantic>=2.7`, `omegaconf`, `httpx`, `Pillow`,
+`numpy`, `scipy`, `PyYAML` and `pytest`; no model weights, API credentials,
+GPU or Hydra are used. The separate `tests/test_room_model_config.py` exercises
+the real scene wrapper and additionally uses its ordinary CPU dependencies
+(`torch`, `networkx`, `rerun-sdk`, `opencv-python`, `imageio`). Run it in the
+GraphEQA mapping environment. Do not invoke the legacy native Habitat test in a
+host-only environment and interpret its missing Hydra dependency as an API failure.
 
 Active paired evaluation additionally requires observed-space execution and a
 matched, declared pose source. This frozen-context runner does not qualify them.
