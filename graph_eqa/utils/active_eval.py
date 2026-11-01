@@ -84,23 +84,32 @@ def run_active_episode(cfg, question, choices, observe, execute, output, *, max_
                 "target_id": target,
                 "target_xyz": position,
                 "motion": None,
+                "execution_attempted": False,
             }
             # Stop and answer exactly as the reference model decided. A prior
             # answer, retrieval score or admission rule cannot replace it.
             result.update(answer=answer, is_confident=bool(confident), decisions=index + 1)
-            if confident:
-                result["status"] = "model_stopped"
-            elif index + 1 == max_decisions:
-                result["status"] = "no_action_not_confident" if target is None else "decision_budget_exhausted"
-            elif target is not None:
-                receipt = execute(target, position)
-                if not isinstance(receipt, dict) or not isinstance(receipt.get("success"), bool):
-                    raise ValueError("Execution must return an explicit measured success/failure receipt")
-                row["motion"] = receipt
-                planner.record_motion_result(receipt)
-            rows.append(row)
-            with (output / "decisions.jsonl").open("a") as stream:
-                stream.write(json.dumps(row) + "\n")
+            try:
+                if confident:
+                    result["status"] = "model_stopped"
+                elif index + 1 == max_decisions:
+                    result["status"] = "no_action_not_confident" if target is None else "decision_budget_exhausted"
+                elif target is not None:
+                    row["execution_attempted"] = True
+                    receipt = execute(target, position)
+                    if not isinstance(receipt, dict) or not isinstance(receipt.get("success"), bool):
+                        raise ValueError("Execution must return an explicit measured success/failure receipt")
+                    row["motion"] = receipt
+                    planner.record_motion_result(receipt)
+            except Exception as exc:
+                row["execution_error"] = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                # Recording may fail after physical side effects. Preserve the
+                # valid model decision without inventing a measured receipt.
+                rows.append(row)
+                with (output / "decisions.jsonl").open("a") as stream:
+                    stream.write(json.dumps(row) + "\n")
             if result["status"] != "running":
                 break
     except Exception as exc:

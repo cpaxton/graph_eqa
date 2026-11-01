@@ -238,3 +238,35 @@ def test_native_empty_plans_keep_history_and_stop_at_declared_budget(tmp_path, m
     second = str(calls[1]["messages"])
     assert "No observation-gathering action selected; no motion executed" in second
     assert "Answer(t=0): A red" in second and "Confident: False" in second and "At t = 1" in second
+
+
+def test_interrupted_execution_keeps_decision_without_fabricating_motion_receipt(tmp_path, monkeypatch):
+    image = tmp_path / "capture.png"
+    Image.new("RGB", (4, 4)).save(image)
+
+    class Planner:
+        def __init__(self, *args):
+            pass
+
+        def get_next_action(self):
+            return [1, 0, 0.7], "object_0", False, 0.2, "A"
+
+    monkeypatch.setattr("graph_eqa.utils.active_eval.VLMPlannerEQAGPT", Planner)
+
+    def execute(*args):
+        raise OSError("recording reserve reached after motion began")
+
+    with pytest.raises(OSError, match="recording reserve"):
+        run_active_episode(
+            {},
+            "Color?",
+            ["red", "blue"],
+            lambda: {"timestamp_ns": 1, "image": image, "context": context()},
+            execute,
+            tmp_path / "run",
+        )
+    row = json.loads((tmp_path / "run/decisions.jsonl").read_text())
+    assert row["target_id"] == "object_0" and row["execution_attempted"]
+    assert row["motion"] is None and "recording reserve" in row["execution_error"]
+    result = json.loads((tmp_path / "run/result.json").read_text())
+    assert result["status"] == "infrastructure_or_contract_failure" and result["completed_decisions"] == 1

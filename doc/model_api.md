@@ -127,7 +127,8 @@ same planner's evidence while retaining measured action history. Omitting this
 field preserves the single-current-image behavior. Capture selection is the
 caller's task-independent policy; this does not authorize oracle image selection.
 
-The current fork retains upstream response-field ordering and stopping behavior.
+The legacy response-field ordering is unchanged. The external active adapter
+stops on the model's explicit `is_confident` signal; numeric confidence is logged.
 An answer-first field-order experiment elicited actions in two frozen Qwen
 requests but did not transfer to fresh single/four-view interaction checks, so
 that default change was reverted. Neither a proposed step in a confident stop
@@ -140,6 +141,9 @@ and confidence summaries remain in planner history and advance its decision
 index. A confident model answer still stops immediately, and exhausted uncertain
 empty plans are reported explicitly. This repairs an early-stop mismatch in the
 external active adapter; it is not evidence of task-quality improvement.
+If execution raises after a valid model decision, the decision stays in the trace
+with `execution_attempted` and the error. An unavailable motion receipt stays
+unknown; it is never replaced by a fabricated success/failure measurement.
 
 ## Adaptations from upstream
 
