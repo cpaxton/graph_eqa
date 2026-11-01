@@ -115,12 +115,12 @@ def main(cfg):
             segmenter=segmenter,
         )
 
-        if 'gpt' in cfg.vlm.name.lower():
+        if cfg.vlm.get('provider') == 'openai_compatible' or 'gpt' in cfg.vlm.name.lower():
             from graph_eqa.planners.vlm_planner_gpt import VLMPlannerEQAGPT
             vlm_planner = VLMPlannerEQAGPT(
                 cfg.vlm,
                 sg_sim,
-                vlm_question, vlm_pred_candidates, choices, answer, 
+                vlm_question, vlm_pred_candidates, choices,
                 question_path)
         elif 'gemini' in cfg.vlm.name.lower():
             from graph_eqa.planners.vlm_planner_gemini import VLMPlannerEQAGemini
@@ -239,10 +239,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-cf", "--cfg_file", help="cfg file name", default="", type=str, required=True)
+    parser.add_argument("--model-config", type=Path, help="Provider/model overlay (vlm settings only)")
     args = parser.parse_args()
 
     config_path = Path(__file__).resolve().parent.parent / 'cfg' / f'{args.cfg_file}.yaml'
     cfg = OmegaConf.load(config_path)
+    if args.model_config:
+        from graph_eqa.utils.model_api import with_model_config
+        cfg = with_model_config(cfg, args.model_config)
 
     OmegaConf.resolve(cfg)
     main(cfg)

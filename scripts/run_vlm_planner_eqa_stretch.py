@@ -102,11 +102,11 @@ def main(stretch_parameter_file, cfg):
     # write_to_pickle(agent.obs_history, 'data_with_semantics')
     # click.secho(f'Location: Bosch Pittsburgh lab',fg="green",)
 
-    if 'gpt' in cfg.vlm.name.lower():
+    if cfg.vlm.get('provider') == 'openai_compatible' or 'gpt' in cfg.vlm.name.lower():
         vlm_planner = VLMPlannerEQAGPT(
             cfg.vlm,
             sg_sim,
-            vlm_question, vlm_pred_candidates, choices, answer, 
+            vlm_question, vlm_pred_candidates, choices,
             output_path)
     elif 'gemini' in cfg.vlm.name.lower():
         vlm_planner = VLMPlannerEQAGemini(
@@ -132,12 +132,16 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-cf", "--cfg_file", help="cfg file name", default="", type=str, required=True)
+    parser.add_argument("--model-config", type=Path, help="Provider/model overlay (vlm settings only)")
     args = parser.parse_args()
 
     stretch_config_path = str(Path(__file__).resolve().parent.parent / 'cfg' / 'stretch_interface.yaml')
 
     cfg_path = Path(__file__).resolve().parent.parent / 'cfg' / f'{args.cfg_file}.yaml'
     cfg = OmegaConf.load(cfg_path)
+    if args.model_config:
+        from graph_eqa.utils.model_api import with_model_config
+        cfg = with_model_config(cfg, args.model_config)
     OmegaConf.resolve(cfg)
 
     main(stretch_config_path, cfg)

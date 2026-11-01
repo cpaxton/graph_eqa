@@ -1,18 +1,10 @@
 import json
 from enum import Enum
 from typing import List, Union
-import time
-import base64
 
-from openai import OpenAI
 from graph_eqa.utils.data_utils import get_latest_image
+from graph_eqa.utils.model_api import StructuredModelAPI, image_evidence_content
 from pydantic import BaseModel
-
-client = OpenAI()
-
-def encode_image(image_path):
-  with open(image_path, "rb") as image_file:
-    return base64.b64encode(image_file.read()).decode('utf-8')
 
 def create_planner_response(frontier_node_list, room_node_list, region_node_list, object_node_list, Answer_options, use_image=True):
 
@@ -70,10 +62,9 @@ def create_planner_response(frontier_node_list, room_node_list, region_node_list
     
 
 class VLMPlannerEQAGPT:
-    def __init__(self, cfg, sg_sim, question, pred_candidates, choices, answer, output_path):
+    def __init__(self, cfg, sg_sim, question, pred_candidates, choices, output_path, *, image_evidence=None):
         
         self._question, self.choices, self.vlm_pred_candidates = question, choices, pred_candidates
-        self._answer = answer
         self._output_path = output_path
         self._vlm_type = cfg.name
         self._use_image = cfg.use_image
@@ -83,23 +74,38 @@ class VLMPlannerEQAGPT:
         self.full_plan = ''
         self._t = 0
         self._add_history = cfg.add_history
+        self.model_api = StructuredModelAPI(cfg, output_path)
 
-        self._outputs_to_save = [f'Question: {self._question}. \n Answer: {self._answer} \n']
+        self._outputs_to_save = [f'Question: {self._question}. \n']
         self.sg_sim = sg_sim
+        self.image_evidence = image_evidence
 
     @property
     def t(self):
         return self._t
+
+    def record_motion_result(self, result):
+        """Keep actual execution feedback distinct from the proposed action.
+
+        The caller supplies the shared executor's receipt, not task answers or
+        oracle geometry. The model remains responsible for its next decision.
+        """
+        # Per-waypoint controller events remain in the decision trace. The
+        # planner needs the outcome/pose receipt, not every low-level poll.
+        receipt = {key: value for key, value in result.items() if key != "events"}
+        self._history += '\nMOTION RESULT: ' + json.dumps(receipt) + '\n'
     
     def get_actions(self): 
-        object_node_list = Enum('object_node_list', {id: name for id, name in zip(self.sg_sim.object_node_ids, self.sg_sim.object_node_names)}, type=str)
+        # Enum values must be instance IDs. Repeated class/room names otherwise
+        # become aliases, making the second object with the same name unselectable.
+        object_node_list = Enum('object_node_list', {id: id for id in self.sg_sim.object_node_ids}, type=str)
         if len(self.sg_sim.frontier_node_ids)> 0:
             frontier_node_list = Enum('frontier_node_list', {ac: ac for ac in self.sg_sim.frontier_node_ids}, type=str)
         else:
             # frontier_node_list = Enum('frontier_node_list', {'frontier_0': 'Do not choose this option. No more frontiers left.'}, type=str)
             frontier_node_list = None
         
-        room_node_list = Enum('room_node_list', {id: name for id, name in zip(self.sg_sim.room_node_ids, self.sg_sim.room_node_names)}, type=str)
+        room_node_list = Enum('room_node_list', {id: id for id in self.sg_sim.room_node_ids}, type=str)
         region_node_list = Enum('region_node_list', {ac: ac for ac in self.sg_sim.region_node_ids}, type=str)
         Answer_options = Enum('Answer_options', {token: choice for token, choice in zip(self.vlm_pred_candidates, self.choices)}, type=str)
         return frontier_node_list, room_node_list, region_node_list, object_node_list, Answer_options
@@ -188,15 +194,19 @@ class VLMPlannerEQAGPT:
         return prompt
 
     def update_history(self, agent_state, step, answer, target_pose):
-        if step.__class__.__name__ == 'Goto_object_node_step':
-            action = f"Goto object_id:{step.object_id.name} object name: {step.object_id.value}"
+        if step is None:
+            action = "No observation-gathering action selected; no motion executed"
+        elif step.__class__.__name__ == 'Goto_object_node_step':
+            names = dict(zip(self.sg_sim.object_node_ids, self.sg_sim.object_node_names))
+            action = f"Goto object_id:{step.object_id.name} object name: {names[step.object_id.name]}"
         else:
             action = f"Goto frontier_id:{step.frontier_id.name} frontier name: {step.frontier_id.value}"
 
         last_step = f'''
             [Agent state(t={self.t}): {agent_state}, 
             Action(t={self.t}): {action}, 
-            Answer(t={self.t}): {answer.answer.name} {answer.answer.value}
+            Intended observed target position(t={self.t}): {list(target_pose) if target_pose is not None else None},
+            Answer(t={self.t}): {json.dumps({"choice_id": answer.answer.name, "answer": answer.answer.value})}
             Confidence(t={self.t}):  Confident: {answer.is_confident}, Confidence level:{answer.confidence_level}  \n
         '''
         self._history += last_step
@@ -212,54 +222,32 @@ class VLMPlannerEQAGPT:
 
         if self._use_image:
 
-            base64_image = encode_image(get_latest_image(self._output_path))
+            images = self.image_evidence
+            if images is None:
+                images = [{"path": get_latest_image(self._output_path), "label": "CURRENT IMAGE: This image represents the current view of the agent. Use this as additional information to answer the question."}]
             messages.append(
                 { 
                     "role": "user",
-                    "content": [
-                        {
-                        "type": "text",
-                        "text": "CURRENT IMAGE: This image represents the current view of the agent. Use this as additional information to answer the question."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                        }
-                    ]
+                    "content": image_evidence_content(images)
                 })
 
         frontier_node_list, room_node_list, region_node_list, object_node_list, Answer_options = self.get_actions()
 
-        succ=False
-        while not succ:
-            try:
-                start = time.time()
-                completion = client.beta.chat.completions.parse(
-                    model=self._vlm_type,
-                    messages=messages,
-                    response_format=create_planner_response(frontier_node_list, room_node_list, region_node_list, object_node_list, Answer_options, use_image=self._use_image),
-                )
-                plan = completion.choices[0].message
-                if not (plan.refusal): # If the model refuses to respond, you will get a refusal message
-                    succ=True
-            except Exception as e:
-                print(f"An error occurred: {e}. Sleeping for 60s")
-                import ipdb; ipdb.set_trace()
-                time.sleep(1)
+        plan = self.model_api.complete(messages, create_planner_response(
+            frontier_node_list, room_node_list, region_node_list, object_node_list,
+            Answer_options, use_image=self._use_image))
 
-        plan = completion.choices[0].message
-
-        if len(plan.parsed.steps) > 0:
-            step = plan.parsed.steps[0]
+        if len(plan.steps) > 0:
+            step = plan.steps[0]
         else:
             step = None
 
         if self._use_image:
-            img_desc = plan.parsed.image_description
+            img_desc = plan.image_description
         else:
             img_desc = ' '
         
-        return step, plan.parsed.answer, img_desc, plan.parsed.scene_graph_description
+        return step, plan.answer, img_desc, plan.scene_graph_description
 
     def get_next_action(self):
         # self.sg_sim.update()
@@ -284,6 +272,9 @@ class VLMPlannerEQAGPT:
         print(f'At t={self._t}: \n {step} \n {answer}')
 
         if step is None:
+            if self._add_history:
+                self.update_history(agent_state, step, answer, None)
+            self._t += 1
             return None, None, answer.is_confident, answer.confidence_level, answer.answer.name
 
         if step.__class__.__name__ == 'Goto_object_node_step':

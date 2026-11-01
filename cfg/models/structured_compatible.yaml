@@ -1,0 +1,12 @@
+# Requires provider/model support for strict:true Chat Completions JSON Schema,
+# including nested anyOf, required properties and additionalProperties:false.
+# OpenAI-compatible transport alone does not imply this support; no fallback.
+vlm:
+  provider: openai_compatible
+  name: ${oc.env:GRAPH_EQA_MODEL}
+  base_url: ${oc.env:GRAPH_EQA_BASE_URL}
+  api_key_env: GRAPH_EQA_API_KEY
+  response_mode: json_schema
+  max_tokens: 2048
+  timeout_s: 120
+  max_retries: 0
