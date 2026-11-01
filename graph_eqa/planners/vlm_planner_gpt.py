@@ -90,7 +90,10 @@ class VLMPlannerEQAGPT:
         The caller supplies the shared executor's receipt, not task answers or
         oracle geometry. The model remains responsible for its next decision.
         """
-        self._history += '\nMOTION RESULT: ' + json.dumps(result) + '\n'
+        # Per-waypoint controller events remain in the decision trace. The
+        # planner needs the outcome/pose receipt, not every low-level poll.
+        receipt = {key: value for key, value in result.items() if key != "events"}
+        self._history += '\nMOTION RESULT: ' + json.dumps(receipt) + '\n'
     
     def get_actions(self): 
         # Enum values must be instance IDs. Repeated class/room names otherwise
@@ -203,7 +206,7 @@ class VLMPlannerEQAGPT:
             [Agent state(t={self.t}): {agent_state}, 
             Action(t={self.t}): {action}, 
             Intended observed target position(t={self.t}): {list(target_pose) if target_pose is not None else None},
-            Answer(t={self.t}): {answer.answer.name} {answer.answer.value}
+            Answer(t={self.t}): {json.dumps({"choice_id": answer.answer.name, "answer": answer.answer.value})}
             Confidence(t={self.t}):  Confident: {answer.is_confident}, Confidence level:{answer.confidence_level}  \n
         '''
         self._history += last_step

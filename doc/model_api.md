@@ -144,6 +144,10 @@ external active adapter; it is not evidence of task-quality improvement.
 If execution raises after a valid model decision, the decision stays in the trace
 with `execution_attempted` and the error. An unavailable motion receipt stays
 unknown; it is never replaced by a fabricated success/failure measurement.
+History labels a choice ID separately from its exact answer value, matching the
+response schema instead of combining them into an invalid answer string. Motion
+history includes the outcome/goal/pose receipt; low-level `events` stay in the
+full decision artifact rather than expanding every later model prompt.
 
 ## Adaptations from upstream
 

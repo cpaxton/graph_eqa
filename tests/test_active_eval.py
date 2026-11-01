@@ -113,7 +113,11 @@ def test_native_planner_refreshes_independent_images_and_retains_motion_history(
             ],
         }
 
-    receipt = {"success": True, "measured_pose": [0.2, 0, 0]}
+    receipt = {
+        "success": True,
+        "measured_pose": [0.2, 0, 0],
+        "events": [{"phase": "internal_control_poll", "measured_pose": [0.1, 0, 0]}],
+    }
     result = run_active_episode(
         SimpleNamespace(name="qwen", use_image=True, add_history=True),
         "Color?",
@@ -137,7 +141,11 @@ def test_native_planner_refreshes_independent_images_and_retains_motion_history(
         ]
         assert data == [images[index].read_bytes(), images[0].read_bytes()]
     assert "MOTION RESULT" not in str(calls[0]["messages"])
-    assert json.dumps(receipt) in str(calls[1]["messages"])
+    assert json.dumps({key: value for key, value in receipt.items() if key != "events"}) in str(calls[1]["messages"])
+    assert "internal_control_poll" not in str(calls[1]["messages"])
+    assert '"choice_id": "A", "answer": "red"' in str(calls[1]["messages"])
+    decisions = [json.loads(s) for s in (tmp_path / "run/decisions.jsonl").read_text().splitlines()]
+    assert decisions[0]["motion"] == receipt  # Full controller evidence survives outside the prompt.
     assert (tmp_path / "run/evidence-001.json").is_file()
 
 
@@ -237,7 +245,8 @@ def test_native_empty_plans_keep_history_and_stop_at_declared_budget(tmp_path, m
     assert len(calls) == 2
     second = str(calls[1]["messages"])
     assert "No observation-gathering action selected; no motion executed" in second
-    assert "Answer(t=0): A red" in second and "Confident: False" in second and "At t = 1" in second
+    assert 'Answer(t=0): {"choice_id": "A", "answer": "red"}' in second
+    assert "Confident: False" in second and "At t = 1" in second
 
 
 def test_interrupted_execution_keeps_decision_without_fabricating_motion_receipt(tmp_path, monkeypatch):
