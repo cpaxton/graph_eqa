@@ -90,11 +90,9 @@ def run_active_episode(cfg, question, choices, observe, execute, output, *, max_
             result.update(answer=answer, is_confident=bool(confident), decisions=index + 1)
             if confident:
                 result["status"] = "model_stopped"
-            elif target is None:
-                result["status"] = "no_action_not_confident"
             elif index + 1 == max_decisions:
-                result["status"] = "decision_budget_exhausted"
-            else:
+                result["status"] = "no_action_not_confident" if target is None else "decision_budget_exhausted"
+            elif target is not None:
                 receipt = execute(target, position)
                 if not isinstance(receipt, dict) or not isinstance(receipt.get("success"), bool):
                     raise ValueError("Execution must return an explicit measured success/failure receipt")

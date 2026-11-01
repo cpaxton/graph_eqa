@@ -159,3 +159,82 @@ def test_history_packet_cannot_replace_current_capture(tmp_path):
             lambda *args: {"success": True},
             tmp_path / "run",
         )
+
+
+def test_uncertain_empty_plan_can_be_followed_by_model_selected_motion(tmp_path, monkeypatch):
+    image = tmp_path / "capture.png"
+    Image.new("RGB", (4, 4)).save(image)
+    decisions = iter(
+        [(None, None, False, 0.1, "A"), ([1, 0, 0.7], "object_0", False, 0.2, "A"), (None, None, True, 0.9, "B")]
+    )
+    planners, motions = [], []
+
+    class Planner:
+        def __init__(self, *args):
+            planners.append(self)
+
+        def get_next_action(self):
+            return next(decisions)
+
+        def record_motion_result(self, receipt):
+            assert receipt["success"]
+
+    monkeypatch.setattr("graph_eqa.utils.active_eval.VLMPlannerEQAGPT", Planner)
+    stamps = iter([1, 2, 3])
+
+    def execute(target, position):
+        motions.append((target, position))
+        return {"success": True, "current_pose": [1, 0, 0]}
+
+    result = run_active_episode(
+        {},
+        "Color?",
+        ["red", "blue"],
+        lambda: {"timestamp_ns": next(stamps), "image": image, "context": context()},
+        execute,
+        tmp_path / "run",
+        max_decisions=3,
+    )
+    assert result["answer"] == "B" and result["status"] == "model_stopped"
+    assert result["completed_decisions"] == 3 and len(planners) == 1
+    assert motions == [("object_0", [1, 0, 0.7])]
+    rows = [json.loads(s) for s in (tmp_path / "run/decisions.jsonl").read_text().splitlines()]
+    assert rows[0]["motion"] is None and rows[1]["motion"]["success"] and rows[2]["motion"] is None
+
+
+def test_native_empty_plans_keep_history_and_stop_at_declared_budget(tmp_path, monkeypatch):
+    image = tmp_path / "capture.png"
+    Image.new("RGB", (4, 4)).save(image)
+    reply = {
+        "steps": [],
+        "answer": {
+            "answer": "red",
+            "explanation_ans": "Unknown",
+            "explanation_conf": "Need observations",
+            "confidence_level": 0.1,
+            "is_confident": False,
+        },
+        "image_description": "A room",
+        "scene_graph_description": "Learned objects",
+    }
+    api, calls = provider(tmp_path / "traces", mode="text", content=json.dumps(reply))
+    monkeypatch.setattr("graph_eqa.planners.vlm_planner_gpt.StructuredModelAPI", lambda *args: api)
+    stamps = iter([1, 2])
+
+    def unexpected_motion(*args):
+        pytest.fail("An empty plan must never force motion")
+
+    result = run_active_episode(
+        SimpleNamespace(name="qwen", use_image=True, add_history=True),
+        "Color?",
+        ["red", "blue"],
+        lambda: {"timestamp_ns": next(stamps), "image": image, "context": context()},
+        unexpected_motion,
+        tmp_path / "run",
+        max_decisions=2,
+    )
+    assert result["status"] == "no_action_not_confident" and result["completed_decisions"] == 2
+    assert len(calls) == 2
+    second = str(calls[1]["messages"])
+    assert "No observation-gathering action selected; no motion executed" in second
+    assert "Answer(t=0): A red" in second and "Confident: False" in second and "At t = 1" in second

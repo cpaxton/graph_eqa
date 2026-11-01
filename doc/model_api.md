@@ -133,6 +133,14 @@ requests but did not transfer to fresh single/four-view interaction checks, so
 that default change was reverted. Neither a proposed step in a confident stop
 nor a successful API response establishes executed navigation or task success.
 
+An uncertain empty plan does not end an active episode immediately: as in the
+legacy runner, the model can retry within the declared decision budget. Every
+retry requires a fresh capture; no fallback motion is issued. Empty-plan answer
+and confidence summaries remain in planner history and advance its decision
+index. A confident model answer still stops immediately, and exhausted uncertain
+empty plans are reported explicitly. This repairs an early-stop mismatch in the
+external active adapter; it is not evidence of task-quality improvement.
+
 ## Adaptations from upstream
 
 - Provider profiles route planner and room calls through configured model APIs;

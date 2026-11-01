@@ -191,7 +191,9 @@ class VLMPlannerEQAGPT:
         return prompt
 
     def update_history(self, agent_state, step, answer, target_pose):
-        if step.__class__.__name__ == 'Goto_object_node_step':
+        if step is None:
+            action = "No observation-gathering action selected; no motion executed"
+        elif step.__class__.__name__ == 'Goto_object_node_step':
             names = dict(zip(self.sg_sim.object_node_ids, self.sg_sim.object_node_names))
             action = f"Goto object_id:{step.object_id.name} object name: {names[step.object_id.name]}"
         else:
@@ -200,7 +202,7 @@ class VLMPlannerEQAGPT:
         last_step = f'''
             [Agent state(t={self.t}): {agent_state}, 
             Action(t={self.t}): {action}, 
-            Intended observed target position(t={self.t}): {list(target_pose)},
+            Intended observed target position(t={self.t}): {list(target_pose) if target_pose is not None else None},
             Answer(t={self.t}): {answer.answer.name} {answer.answer.value}
             Confidence(t={self.t}):  Confident: {answer.is_confident}, Confidence level:{answer.confidence_level}  \n
         '''
@@ -267,6 +269,9 @@ class VLMPlannerEQAGPT:
         print(f'At t={self._t}: \n {step} \n {answer}')
 
         if step is None:
+            if self._add_history:
+                self.update_history(agent_state, step, answer, None)
+            self._t += 1
             return None, None, answer.is_confident, answer.confidence_level, answer.answer.name
 
         if step.__class__.__name__ == 'Goto_object_node_step':
