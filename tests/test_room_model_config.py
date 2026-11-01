@@ -4,6 +4,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from graph_eqa.scene_graph import scene_graph_sim as scene_module
 from graph_eqa.utils.model_api import with_model_config
@@ -86,3 +87,34 @@ def test_all_shipped_room_enrichment_configs_have_explicit_model_settings():
         cfg = OmegaConf.load(path)
         if cfg.scene_graph_sim.enrich_rooms:
             assert cfg.vlm.name and cfg.vlm.room_model
+
+
+def test_planning_frontiers_match_current_action_registry_without_changing_native_map(tmp_path):
+    def node(category, index, position, layer):
+        return SimpleNamespace(
+            id=SimpleNamespace(category=category, category_id=index),
+            layer=layer,
+            attributes=SimpleNamespace(position=np.array(position, dtype=float), semantic_label=0),
+            timestamp=100,
+        )
+
+    native_frontier = node("f", 1800, [4, 5, 2], 3)
+    graph = SimpleNamespace(
+        dynamic_layers=[SimpleNamespace(nodes=[node("a", 0, [0, 0, 1.5], 2)])],
+        nodes=[native_frontier, node("r", 0, [0, 0, 0], 4)],
+        edges=[],
+        dynamic_interlayer_edges=[],
+    )
+    scene = scene_module.SceneGraphSim(mapping_config(False), tmp_path, SimpleNamespace(graph=graph))
+    scene.update(frontier_nodes=np.array([[0.3, 1.3, 0], [0.4, -1, 0]]))
+    context = scene.planner_context()
+    frontiers = {item["id"] for item in context["scene_graph"]["nodes"] if item["name"] == "frontier"}
+    assert frontiers == set(context["actions"]["frontiers"]) == {"frontier_0", "frontier_1"}
+    assert graph.nodes[0] is native_frontier  # The native reconstruction is untouched.
+
+    scene.update_frontier_nodes(np.array([[0.7, 1.5, 0]]))
+    assert scene.frontier_node_ids == ["frontier_0"] and "frontier_1" not in scene.filtered_netx_graph
+    assert scene.get_position_from_id("frontier_0").tolist() == [0.7, 1.5, 0]
+    scene.update_frontier_nodes(np.empty((0, 3)))
+    assert scene.frontier_node_ids == []
+    assert not any(attr["name"] == "frontier" for _, attr in scene.filtered_netx_graph.nodes(data=True))

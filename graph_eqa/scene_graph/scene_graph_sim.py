@@ -170,6 +170,11 @@ class SceneGraphSim:
         for node in self.pipeline.graph.nodes:
             attr={}
             nodeid, node_type, node_name = self._get_node_properties(node)
+            # Native 3-D frontiers are not executable navigation candidates.
+            # Their edges are excluded below; omit the dangling nodes too.
+            # The caller supplies the actionable observed-space frontiers.
+            if node_type == 'frontier':
+                continue
             attr['position'] = list(node.attributes.position)
             attr['name'] = node_name
             attr['layer'] = node.layer
@@ -256,10 +261,11 @@ class SceneGraphSim:
             )])
         
     def update_frontier_nodes(self, frontier_nodes):
+        self.filtered_netx_graph.remove_nodes_from(self._frontier_node_ids)
+        self._frontier_node_ids = []
         if len(frontier_nodes)>0:
             self.filtered_obj_positions = np.asarray(self.filtered_obj_positions).reshape(-1, 3)
             self.filtered_obj_ids = np.array(self.filtered_obj_ids)
-            self._frontier_node_ids = []
             for i in range(frontier_nodes.shape[0]):
                 attr={}
                 attr['position'] = list(frontier_nodes[i])
