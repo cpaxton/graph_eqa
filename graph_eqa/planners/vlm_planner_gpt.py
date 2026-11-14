@@ -3,6 +3,7 @@ from enum import Enum
 from typing import List, Union
 
 from graph_eqa.utils.data_utils import get_latest_image
+from graph_eqa.utils.json_data import json_numeric_copy
 from graph_eqa.utils.model_api import StructuredModelAPI, image_evidence_content
 from pydantic import BaseModel
 
@@ -92,7 +93,7 @@ class VLMPlannerEQAGPT:
         """
         # Per-waypoint controller events remain in the decision trace. The
         # planner needs the outcome/pose receipt, not every low-level poll.
-        receipt = {key: value for key, value in result.items() if key != "events"}
+        receipt = json_numeric_copy({key: value for key, value in result.items() if key != "events"})
         self._history += '\nMOTION RESULT: ' + json.dumps(receipt) + '\n'
     
     def get_actions(self): 
@@ -205,7 +206,7 @@ class VLMPlannerEQAGPT:
         last_step = f'''
             [Agent state(t={self.t}): {agent_state}, 
             Action(t={self.t}): {action}, 
-            Intended observed target position(t={self.t}): {list(target_pose) if target_pose is not None else None},
+            Intended observed target position(t={self.t}): {json_numeric_copy(target_pose)},
             Answer(t={self.t}): {json.dumps({"choice_id": answer.answer.name, "answer": answer.answer.value})}
             Confidence(t={self.t}):  Confident: {answer.is_confident}, Confidence level:{answer.confidence_level}  \n
         '''

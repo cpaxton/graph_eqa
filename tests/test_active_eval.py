@@ -5,6 +5,7 @@ import base64
 import json
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from graph_eqa.utils.active_eval import run_active_episode
 from PIL import Image
@@ -74,7 +75,8 @@ def test_stale_capture_stops_before_second_model_call_and_retains_failure(tmp_pa
     assert result["status"] == "infrastructure_or_contract_failure" and result["completed_decisions"] == 1
 
 
-def test_native_planner_refreshes_independent_images_and_retains_motion_history(tmp_path, monkeypatch):
+@pytest.mark.parametrize("numpy_receipt", [False, True])
+def test_native_planner_refreshes_independent_images_and_retains_motion_history(tmp_path, monkeypatch, numpy_receipt):
     images = [tmp_path / f"capture-{index}.png" for index in range(3)]
     for path, color in zip(images, ("red", "blue", "green"), strict=True):
         Image.new("RGB", (4, 4), color).save(path)
@@ -115,9 +117,14 @@ def test_native_planner_refreshes_independent_images_and_retains_motion_history(
 
     receipt = {
         "success": True,
-        "measured_pose": [0.2, 0, 0],
-        "events": [{"phase": "internal_control_poll", "measured_pose": [0.1, 0, 0]}],
+        "measured_pose": [0.2, 0.0, 0.0],
+        "events": [{"phase": "internal_control_poll", "measured_pose": [0.1, 0.0, 0.0]}],
     }
+    expected_receipt = json.loads(json.dumps(receipt))
+    if numpy_receipt:
+        receipt["success"] = np.bool_(True)
+        receipt["measured_pose"] = np.array(receipt["measured_pose"])
+        receipt["events"][0]["measured_pose"] = np.array(receipt["events"][0]["measured_pose"])
     result = run_active_episode(
         SimpleNamespace(name="qwen", use_image=True, add_history=True),
         "Color?",
@@ -141,11 +148,11 @@ def test_native_planner_refreshes_independent_images_and_retains_motion_history(
         ]
         assert data == [images[index].read_bytes(), images[0].read_bytes()]
     assert "MOTION RESULT" not in str(calls[0]["messages"])
-    assert json.dumps({key: value for key, value in receipt.items() if key != "events"}) in str(calls[1]["messages"])
+    assert json.dumps({key: value for key, value in expected_receipt.items() if key != "events"}) in str(calls[1]["messages"])
     assert "internal_control_poll" not in str(calls[1]["messages"])
     assert '"choice_id": "A", "answer": "red"' in str(calls[1]["messages"])
     decisions = [json.loads(s) for s in (tmp_path / "run/decisions.jsonl").read_text().splitlines()]
-    assert decisions[0]["motion"] == receipt  # Full controller evidence survives outside the prompt.
+    assert decisions[0]["motion"] == expected_receipt  # Full controller evidence survives outside the prompt.
     assert (tmp_path / "run/evidence-001.json").is_file()
 
 
@@ -279,3 +286,33 @@ def test_interrupted_execution_keeps_decision_without_fabricating_motion_receipt
     assert row["motion"] is None and "recording reserve" in row["execution_error"]
     result = json.loads((tmp_path / "run/result.json").read_text())
     assert result["status"] == "infrastructure_or_contract_failure" and result["completed_decisions"] == 1
+
+@pytest.mark.parametrize('bad_value', [object(), float('nan')])
+def test_unserializable_receipt_preserves_decision_after_execution(tmp_path, monkeypatch, bad_value):
+    image = tmp_path / 'capture.png'
+    Image.new('RGB', (4, 4)).save(image)
+    effects = []
+
+    class Planner:
+        def __init__(self, *args):
+            pass
+
+        def get_next_action(self):
+            return np.array([1.0, 0.0, 0.7]), 'object_0', False, 0.2, 'A'
+
+    monkeypatch.setattr('graph_eqa.utils.active_eval.VLMPlannerEQAGPT', Planner)
+
+    def execute(*args):
+        effects.append('executed')
+        return {'success': True, 'measured_pose': bad_value}
+
+    with pytest.raises((TypeError, ValueError)):
+        run_active_episode({}, 'Color?', ['red', 'blue'],
+                           lambda: {'timestamp_ns': 1, 'image': image, 'context': context()},
+                           execute, tmp_path / 'run', max_decisions=2)
+    rows = [json.loads(line) for line in (tmp_path / 'run/decisions.jsonl').read_text().splitlines()]
+    assert effects == ['executed'] and len(rows) == 1
+    assert rows[0]['execution_attempted'] and rows[0]['motion'] is None
+    assert rows[0]['target_xyz'] == [1.0, 0.0, 0.7] and rows[0]['execution_error']
+    result = json.loads((tmp_path / 'run/result.json').read_text())
+    assert result['completed_decisions'] == 1 and result['status'] == 'infrastructure_or_contract_failure'

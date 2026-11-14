@@ -229,3 +229,16 @@ def test_planner_strict_schema_closes_all_objects_and_keeps_empty_plans_legal(us
     if use_image:
         data["image_description"] = "current view"
     assert response.model_validate(data).steps == []
+
+
+def test_legacy_prompt_history_uses_plain_numpy_numbers(tmp_path):
+    import numpy as np
+    from graph_eqa.planners.vlm_planner_gpt import VLMPlannerEQAGPT
+
+    planner = object.__new__(VLMPlannerEQAGPT)
+    planner._history, planner._t = '', 0
+    answer = SimpleNamespace(answer=SimpleNamespace(name='A', value='red'), is_confident=False, confidence_level=0.2)
+    planner.update_history('estimated pose', None, answer, np.array([1.0, 0.0, 0.5]))
+    assert '[1.0, 0.0, 0.5]' in planner._history and 'np.float' not in planner._history
+    planner.record_motion_result({'success': np.bool_(False), 'measured_pose': np.array([1.0, 0.0, 0.5])})
+    assert '"success": false' in planner._history

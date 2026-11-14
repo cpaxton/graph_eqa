@@ -229,3 +229,21 @@ checks. The first q2/q6/q12 diagnostic returned three wrong answers and executed
 no model-selected motion. API/native wiring therefore does **not** establish a
 working active baseline. Match pose, perception, acquisition and motion budgets
 before comparing against emet or reported upstream results.
+
+### Mounted sensor-validator contract
+
+The worker's `from grapheqa_sensor import validate_packet` is an explicit
+cross-repository dependency. Qualification uses the host module
+`src/emet/eval/grapheqa_sensor.py` at emet commit `06b4d477`, SHA-256
+`3e63e76acda98fafc84a322c5d790b8bab6ac20439c05b2144ef30967f217e4d`.
+Mount that module on the worker's `PYTHONPATH` alongside the frozen host and
+fork revisions in the run manifest. The entry point is
+`validate_packet(packet, *, num_labels: int) -> None`; errors propagate before
+native ingestion. Required fields are `rgb`, `depth`, `camera_K`, `camera_pose`,
+`timestamp_ns`, and `learned_labels`, with the exact shapes/dtypes validated by
+that module. API changes require requalification; this is a documented source
+pin, not automatic version negotiation or a vendored shim.
+
+The worker currently rebuilds the graph-context adapter for each capture.
+Caching is a possible throughput optimization; it does not block the receipt
+serialization fixes and should be measured before changing mapping lifecycle.

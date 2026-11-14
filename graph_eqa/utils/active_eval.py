@@ -11,6 +11,7 @@ from pathlib import Path
 
 from graph_eqa.planners.vlm_planner_gpt import VLMPlannerEQAGPT
 from graph_eqa.utils.eval_context import FrozenSceneContext
+from graph_eqa.utils.json_data import json_numeric_copy
 
 
 def run_active_episode(cfg, question, choices, observe, execute, output, *, max_decisions=8):
@@ -82,7 +83,7 @@ def run_active_episode(cfg, question, choices, observe, execute, output, *, max_
                 "is_confident": confident,
                 "confidence_level": confidence,
                 "target_id": target,
-                "target_xyz": position,
+                "target_xyz": json_numeric_copy(position),
                 "motion": None,
                 "execution_attempted": False,
             }
@@ -96,7 +97,7 @@ def run_active_episode(cfg, question, choices, observe, execute, output, *, max_
                     result["status"] = "no_action_not_confident" if target is None else "decision_budget_exhausted"
                 elif target is not None:
                     row["execution_attempted"] = True
-                    receipt = execute(target, position)
+                    receipt = json_numeric_copy(execute(target, position))
                     if not isinstance(receipt, dict) or not isinstance(receipt.get("success"), bool):
                         raise ValueError("Execution must return an explicit measured success/failure receipt")
                     row["motion"] = receipt
